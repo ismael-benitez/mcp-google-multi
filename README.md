@@ -46,6 +46,8 @@ You don't need to know anything about MCP or OAuth — five steps, all copy-past
 
 Restart your client and the tools appear. Check everything with `mcp-google-multi config check`.
 
+**Claude Cowork / clients that don't refresh the tool list:** discovered tools never show up there. List the ones you need from boot with `GOOGLE_ALWAYS_EXPOSE`, e.g. `GOOGLE_ALWAYS_EXPOSE=drive_search,drive_list,drive_upload,drive_trash,drive_untrash`. `drive_upload` takes inline `content` (UTF-8) or `contentBase64` as well as `localPath`, so a client running elsewhere (e.g. a cloud sandbox) can upload files it generated. See [always-exposed tools](./docs/configuration.md#always-exposed-tools) and the [Drive upload write-control recipe](./docs/configuration.md#recipe-drive-uploads-with-recoverable-trash-no-sharing).
+
 **Go deeper:** [Configuration reference](./docs/configuration.md) · [What's covered](./COVERAGE.md) · [Features tour](./docs/features.md) · [Secrets in a vault](./docs/secrets.md) · [Upgrading from v4](./docs/upgrading-v4.md) · [Security policy](./SECURITY.md) · [Roadmap](https://github.com/bakissation/mcp-google-multi/milestones)
 
 ## Maintainer & credits

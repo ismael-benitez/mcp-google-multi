@@ -6,6 +6,8 @@ How the server keeps 872 tools usable, fast, and safe. Back to the [README](../R
 
 The server does **not** dump hundreds of tool schemas into your model's context. At boot, `tools/list` exposes only one small `{service}_discover` tool per service (plus the escape hatch and `account_list`). Calling e.g. `drive_discover` returns that service's operation catalog (name, one-line summary, arguments, read/write class), reveals the operational tools, and emits `notifications/tools/list_changed` so the client re-fetches the list. An optional `query` argument filters the catalog.
 
+For clients that ignore `tools/list_changed`, `GOOGLE_ALWAYS_EXPOSE` pins named tools into the boot listing — see [always-exposed tools](./configuration.md#always-exposed-tools).
+
 Hidden is a listing concept, not a security boundary: operational tools stay callable at all times (existing prompts that call tools directly keep working), and write-control + OAuth scopes remain the real enforcement. Use `GOOGLE_TOOLSETS` to switch entire services off — it is a filter only: listing an optional service does not enable it without its `GOOGLE_OPTIONAL_SCOPES` / `GOOGLE_ADMIN_ACCOUNTS` gate.
 
 ## Curated + generated tiers

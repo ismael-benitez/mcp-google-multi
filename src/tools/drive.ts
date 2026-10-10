@@ -13,6 +13,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { pipeline } from 'node:stream/promises';
+import { Readable } from 'node:stream';
 import mime from 'mime-types';
 
 const accountEnum = z.enum(ACCOUNTS);
@@ -53,6 +54,75 @@ export function resolveShareNotification(opts: {
   if (opts.type !== 'user' && opts.type !== 'group') return undefined;
   if (opts.transferOwnership || opts.role === 'owner') return true;
   return opts.sendNotification ?? true;
+}
+
+export const UPLOAD_RESPONSE_FIELDS = 'id,name,parents,mimeType,size,webViewLink';
+
+export type UploadSource =
+  | { ok: true; body: Readable; mimeType: string; size: number }
+  | { ok: false; error: 'invalid_argument' | 'not_found'; message: string };
+
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+// Messages name the arguments only — never the payload (uploads may carry personal data).
+export function resolveUploadSource(args: {
+  filename: string;
+  localPath?: string;
+  content?: string;
+  contentBase64?: string;
+  mimeType?: string;
+}): UploadSource {
+  const given = [args.localPath, args.content, args.contentBase64].filter((v) => v !== undefined).length;
+  if (given !== 1) {
+    return { ok: false, error: 'invalid_argument', message: 'Pass exactly one of localPath, content or contentBase64.' };
+  }
+  const typeFrom = (name: string) => args.mimeType ?? (mime.lookup(name) || 'application/octet-stream');
+
+  if (args.localPath !== undefined) {
+    let size: number;
+    try {
+      size = fs.statSync(args.localPath).size;
+    } catch {
+      return { ok: false, error: 'not_found', message: 'localPath does not exist or is not readable on the server host.' };
+    }
+    return { ok: true, body: fs.createReadStream(args.localPath), mimeType: typeFrom(args.localPath), size };
+  }
+
+  let bytes: Buffer;
+  if (args.content !== undefined) {
+    bytes = Buffer.from(args.content, 'utf8');
+  } else {
+    const b64 = (args.contentBase64 as string).replace(/\s+/g, '');
+    if (!BASE64.test(b64)) {
+      return { ok: false, error: 'invalid_argument', message: 'contentBase64 is not valid standard base64.' };
+    }
+    bytes = Buffer.from(b64, 'base64');
+  }
+  return {
+    ok: true,
+    body: Readable.from([bytes]),
+    mimeType: typeFrom(args.filename),
+    size: bytes.length,
+  };
+}
+
+export function buildUploadRequest(args: {
+  filename: string;
+  parentFolderId?: string;
+  convertTo?: string;
+  source: Extract<UploadSource, { ok: true }>;
+}) {
+  return {
+    requestBody: {
+      name: args.filename,
+      ...(args.parentFolderId ? { parents: [args.parentFolderId] } : {}),
+      // Setting a google-apps target type makes Drive convert the media on import.
+      ...(args.convertTo ? { mimeType: args.convertTo } : {}),
+    },
+    media: { mimeType: args.source.mimeType, body: args.source.body },
+    fields: UPLOAD_RESPONSE_FIELDS,
+    supportsAllDrives: true as const,
+  };
 }
 
 export function registerDriveTools(server: ToolRegistry): void {
@@ -248,43 +318,35 @@ export function registerDriveTools(server: ToolRegistry): void {
   server.registerTool(
     'drive_upload',
     {
-      description: 'Upload a local file to Google Drive. Pass `convertTo` to import it as a native, editable Google Doc/Sheet/Slides/Drawing instead of storing the raw bytes.',
+      description: 'Upload a file to Google Drive (My Drive or a shared drive). Pass exactly one source: `content` (UTF-8 text), `contentBase64` (binary) or `localPath` (a file on the machine running this server). Pass `convertTo` to import it as a native, editable Google Doc/Sheet/Slides/Drawing instead of storing the raw bytes. Returns id, name, parents, mimeType, size, webViewLink.',
       inputSchema: {
         account: accountEnum.describe('Google account alias'),
-        localPath: z.string().describe('Absolute path to file on disk'),
         filename: z.string().describe('Name as it appears in Drive'),
-        mimeType: z.string().optional().describe('Source MIME type of the local file (inferred from extension if omitted). With `convertTo`, this is the format Drive imports from.'),
+        content: z.string().optional().describe('Inline UTF-8 text content. Exclusive with contentBase64/localPath.'),
+        contentBase64: z.string().optional().describe('Inline binary content, standard base64. Exclusive with content/localPath.'),
+        localPath: z.string().optional().describe('Absolute path to a file on the server host. Exclusive with content/contentBase64.'),
+        mimeType: z.string().optional().describe('Source MIME type (inferred from filename — or localPath — extension if omitted; .md → text/markdown). With `convertTo`, this is the format Drive imports from.'),
         convertTo: z.enum([
           'application/vnd.google-apps.document',
           'application/vnd.google-apps.spreadsheet',
           'application/vnd.google-apps.presentation',
           'application/vnd.google-apps.drawing',
         ]).optional().describe('Convert the upload into this native Google Workspace type on import (e.g. upload .md/.html/.docx/.txt with convertTo=...google-apps.document to get a real Google Doc). Source must be an importable format. Omit to store the file as-is.'),
-        parentFolderId: z.string().optional().describe('Parent folder ID (defaults to My Drive root)'),
+        parentFolderId: z.string().optional().describe('Parent folder ID, including folders in shared drives (defaults to My Drive root)'),
       },
     },
-    async ({ account, localPath, filename, mimeType: mimeTypeArg, convertTo, parentFolderId }) => {
+    async ({ account, localPath, content, contentBase64, filename, mimeType, convertTo, parentFolderId }) => {
+      const source = resolveUploadSource({ filename, localPath, content, contentBase64, mimeType });
+      if (!source.ok) {
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ error: source.error, message: source.message, retriable: false, account }) }],
+          isError: true as const,
+        };
+      }
       try {
         const auth = await getClient(account as Account);
         const drive = driveClient({ version: 'v3', auth });
-
-        const resolvedMime = mimeTypeArg ?? (mime.lookup(localPath) || 'application/octet-stream');
-        const fileStream = fs.createReadStream(localPath);
-
-        const res = await drive.files.create({
-          requestBody: {
-            name: filename,
-            parents: parentFolderId ? [parentFolderId] : undefined,
-            // Setting a google-apps target type makes Drive convert the media on import.
-            ...(convertTo ? { mimeType: convertTo } : {}),
-          },
-          media: {
-            mimeType: resolvedMime,
-            body: fileStream,
-          },
-          fields: 'id,name,mimeType,webViewLink,size',
-          supportsAllDrives: true,
-        });
+        const res = await drive.files.create(buildUploadRequest({ filename, parentFolderId, convertTo, source }));
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(res.data, null, 2) }],
         };

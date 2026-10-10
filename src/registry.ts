@@ -67,6 +67,7 @@ export class ToolRegistry {
   readonly policy: Policy;
   readonly registerTool: McpServer['registerTool'];
   private readonly revealed = new Set<string>();
+  private readonly pinned = new Set<string>();
   private readonly jsonSchemaCache = new Map<string, unknown>();
   private readonly compactOutput = trimEnabled();
   private registeringMeta = false;
@@ -159,8 +160,19 @@ export class ToolRegistry {
     return true;
   }
 
+  // Static: called before installListHandler(), so no tools/list_changed. Returns names that matched no tool.
+  exposeAlways(names: string[]): string[] {
+    const known = new Set(this.tools.filter((t) => !t.meta).map((t) => t.name));
+    const unknown: string[] = [];
+    for (const name of names) {
+      if (known.has(name)) this.pinned.add(name);
+      else unknown.push(name);
+    }
+    return unknown;
+  }
+
   isVisible(tool: ToolEntry): boolean {
-    return tool.meta || this.revealed.has(tool.service);
+    return tool.meta || this.pinned.has(tool.name) || this.revealed.has(tool.service);
   }
 
   visibleCount(): { eager: number; revealed: number; hidden: number } {

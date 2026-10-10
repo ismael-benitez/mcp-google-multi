@@ -10,6 +10,7 @@ import { GENERATED_SERVICES } from './tools/generated/index.js';
 import { GENERATED_GATES, SERVICES } from './services.js';
 import { ToolRegistry } from './registry.js';
 import { registerDiscoverTools } from './discover.js';
+import { parseAlwaysExpose } from './always-expose.js';
 import { registerEscapeTools } from './tools/google-api.js';
 import { registerAccountTools } from './tools/accounts-tool.js';
 import { getToolsets, toolsetEnabled } from './toolsets.js';
@@ -63,6 +64,9 @@ function buildRegistry(server: McpServer, policy: Policy): ToolRegistry {
   registerDiscoverTools(registry, policy);
   registerEscapeTools(registry, policy);
   registerAccountTools(registry);
+  for (const name of registry.exposeAlways(parseAlwaysExpose())) {
+    process.stderr.write(`GOOGLE_ALWAYS_EXPOSE: unknown tool "${name}" ignored\n`);
+  }
   return registry;
 }
 
@@ -103,7 +107,7 @@ async function main() {
     }
     console.log(`Disabled: ${disabledLine}`);
     console.log(`Services: ${registry.services().join(', ')}`);
-    console.log(`Tool surface: ${counts.eager} eager (discover + escape hatch), ${counts.hidden} deferred until discovery`);
+    console.log(`Tool surface: ${counts.eager} eager (discover + escape hatch), ${counts.revealed} always exposed (GOOGLE_ALWAYS_EXPOSE), ${counts.hidden} deferred until discovery`);
     console.log(`Escape hatch: google_api_call CUD verdicts follow profile=${policy.profile} and your allow/deny globs`);
     return;
   }

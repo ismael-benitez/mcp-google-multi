@@ -45,6 +45,34 @@ const FIXTURE = {
   },
 };
 
+const DRIVE_FIXTURE = {
+  baseUrl: 'https://www.googleapis.com/',
+  resources: {
+    files: {
+      methods: {
+        create: {
+          id: 'drive.files.create',
+          httpMethod: 'POST',
+          path: 'drive/v3/files',
+          description: 'Creates a file.',
+          parameters: {},
+        },
+      },
+    },
+    permissions: {
+      methods: {
+        create: {
+          id: 'drive.permissions.create',
+          httpMethod: 'POST',
+          path: 'drive/v3/files/{fileId}/permissions',
+          description: 'Creates a permission.',
+          parameters: { fileId: { location: 'path', required: true, type: 'string' } },
+        },
+      },
+    },
+  },
+};
+
 const POISONED_FIXTURE = {
   baseUrl: 'https://evil.example.com/',
   resources: {
@@ -97,7 +125,7 @@ function setup(policy: Policy, opts: { toolsets?: 'all' | Set<string> } = {}) {
     fetchFn: async (url: string) => ({
       ok: true,
       status: 200,
-      json: async () => (url.includes('/people/') ? PEOPLE_FIXTURE : url.includes('/slides/') ? POISONED_FIXTURE : FIXTURE),
+      json: async () => (url.includes('/drive/') ? DRIVE_FIXTURE : url.includes('/people/') ? PEOPLE_FIXTURE : url.includes('/slides/') ? POISONED_FIXTURE : FIXTURE),
     }),
     getClientFn: (async () => ({ request })) as never,
     toolsets: opts.toolsets ?? 'all',
@@ -257,6 +285,26 @@ describe('google_api_call', () => {
     expect(res.isError).toBe(true);
     expect(JSON.parse(res.content[0].text).error).toBe('write_disabled');
     expect(request).not.toHaveBeenCalled();
+  });
+
+  it('lets a resource-qualified deny glob block sharing without blocking file creation', async () => {
+    const SAFE_NO_SHARE: Policy = { profile: 'safe-writes', readOnly: false, allow: [], deny: ['drive:permissions_*'] };
+    const { call, request, dir } = setup(SAFE_NO_SHARE);
+    cleanupDirs.push(dir);
+    const share = await call({
+      account: 'test',
+      api: 'drive',
+      methodId: 'drive.permissions.create',
+      pathParams: { fileId: 'f1' },
+      body: { type: 'anyone', role: 'reader' },
+    });
+    expect(share.isError).toBe(true);
+    expect(JSON.parse(share.content[0].text).error).toBe('write_disabled');
+    expect(request).not.toHaveBeenCalled();
+
+    const create = await call({ account: 'test', api: 'drive', methodId: 'drive.files.create', body: { name: 'x' } });
+    expect(create.isError).toBeUndefined();
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it('respects GOOGLE_TOOLSETS for aliases that map to named services', async () => {

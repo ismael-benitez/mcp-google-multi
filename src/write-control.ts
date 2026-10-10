@@ -13,6 +13,8 @@ interface ToolRef {
   name: string;
   service: string;
   cud: Cud;
+  // Extra op candidates (escape hatch passes resource-qualified ids like "permissions_create").
+  aliases?: string[];
 }
 
 const PROFILES: Profile[] = ['read-only', 'safe-writes', 'full-writes'];
@@ -43,7 +45,7 @@ function globToRegExp(glob: string): RegExp {
 
 function candidates(tool: ToolRef): string[] {
   const op = tool.name.includes('_') ? tool.name.slice(tool.name.indexOf('_') + 1) : tool.name;
-  return [`${tool.service}:${tool.cud}`, `${tool.service}:${op}`];
+  return [`${tool.service}:${tool.cud}`, `${tool.service}:${op}`, ...(tool.aliases ?? []).map((a) => `${tool.service}:${a}`)];
 }
 
 function matchesAny(tool: ToolRef, globs: string[]): boolean {

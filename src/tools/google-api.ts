@@ -176,7 +176,9 @@ export function registerEscapeTools(registry: ToolRegistry, policy: Policy, deps
       const cud = cudFromMethod(method);
       const policyService = serviceForAlias(api as string);
       const lastSegment = method.id.split('.').pop() ?? method.id;
-      const toolRef = { name: `${policyService}_${lastSegment}`, service: policyService, cud };
+      // Alias "<resource>_<method>" lets globs tell drive.permissions.create from drive.files.create.
+      const resourceMethod = method.id.split('.').slice(1).join('_');
+      const toolRef = { name: `${policyService}_${lastSegment}`, service: policyService, cud, aliases: [resourceMethod] };
       if (cud !== 'read' && !isAllowed(toolRef, policy)) {
         return writeDisabledResult(toolRef, policy);
       }

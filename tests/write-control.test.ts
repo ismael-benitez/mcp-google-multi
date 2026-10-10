@@ -79,3 +79,46 @@ describe('describePolicy', () => {
     ).toBe('profile=safe-writes readOnly=false allow=[a:*] deny=[*:delete*]');
   });
 });
+
+describe('Drive upload policy (safe-writes + explicit trash, sharing denied)', () => {
+  // Mirrors the documented recipe in docs/configuration.md ("Drive uploads with recoverable trash").
+  const p = resolvePolicy({
+    GOOGLE_PROFILE: 'safe-writes',
+    GOOGLE_WRITE_ALLOW: 'calendar:*,chat:*,sheets:*,drive:trash,drive:untrash',
+    GOOGLE_WRITE_DENY: 'drive:share,drive:permission_update,drive:remove_permission,drive:permissions_*',
+  });
+
+  it.each([
+    ['drive_upload', 'create'],
+    ['drive_trash', 'delete'],
+    ['drive_untrash', 'update'],
+  ] as const)('allows %s', (name, cud) => {
+    expect(isAllowed(tool(name, cud), p)).toBe(true);
+  });
+
+  it.each([
+    ['drive_delete', 'delete'],
+    ['drive_empty_trash', 'delete'],
+    ['drive_transfer_move', 'delete'],
+    ['drive_share', 'create'],
+    ['drive_permission_update', 'update'],
+    ['drive_remove_permission', 'delete'],
+  ] as const)('blocks %s', (name, cud) => {
+    expect(isAllowed(tool(name, cud), p)).toBe(false);
+  });
+
+  it('leaves the other services exactly as before', () => {
+    expect(isAllowed(tool('calendar_delete_event', 'delete'), p)).toBe(true);
+    expect(isAllowed(tool('gmail_delete', 'delete'), p)).toBe(false);
+    expect(isAllowed(tool('gmail_send', 'create'), p)).toBe(true);
+  });
+});
+
+describe('policy aliases (extra op candidates)', () => {
+  it('lets a deny glob match an alias without changing name/cud matching', () => {
+    const p: Policy = { profile: 'safe-writes', readOnly: false, allow: [], deny: ['drive:permissions_*'] };
+    expect(isAllowed({ name: 'drive_create', service: 'drive', cud: 'create', aliases: ['permissions_create'] }, p)).toBe(false);
+    expect(isAllowed({ name: 'drive_create', service: 'drive', cud: 'create', aliases: ['files_create'] }, p)).toBe(true);
+    expect(isAllowed({ name: 'drive_create', service: 'drive', cud: 'create' }, p)).toBe(true);
+  });
+});
